@@ -18,15 +18,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Description								/*{{{*/
-/* ######################################################################
-
-   Copy URI - This method takes a uri like a file: uri and copies it
-   to the destination file.
-
-   ##################################################################### */
-/*}}}*/
-// Include Files							/*{{{*/
 #include <apt-pkg/acquire-method.h>
 #include <apt-pkg/configuration.h>
 #include <apt-pkg/error.h>
@@ -38,6 +29,8 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
+
+#include "libtftp.h"
 
 class aptMethod : public pkgAcqMethod
 {
@@ -126,13 +119,6 @@ class aptMethod : public pkgAcqMethod
 		return QuoteString(part, _config->Find("Acquire::URIEncode", "+~ ").c_str());
 	}
 
-	static std::string DecodeSendURI(std::string const &part)
-	{
-		if (_config->FindB("Acquire::Send-URI-Encoded", false))
-			return DeQuoteString(part);
-		return part;
-	}
-
 	aptMethod(std::string &&Binary, char const *const Ver, unsigned long const Flags) APT_NONNULL(3)
 		: pkgAcqMethod(Ver, Flags), Binary(std::move(Binary)), SeccompFlags(0)
 	{
@@ -153,7 +139,7 @@ class TftpMethod : public aptMethod
 	virtual bool Fetch(FetchItem *Itm) APT_OVERRIDE;
 
 	public:
-	TftpMethod() : aptMethod("tftp", "1.0", SendURIEncoded)
+	TftpMethod() : aptMethod("tftp", "1.0", 0)
 	{
 		SeccompFlags = aptMethod::BASE;
 	}
@@ -165,46 +151,41 @@ class TftpMethod : public aptMethod
 bool TftpMethod::Fetch(FetchItem *Itm)
 {
 	URI Get(Itm->Uri);
-	auto const File = DecodeSendURI(Get.Path);
+	const std::string File = Get.Path;
 
 	// Formulate a result and send a start message
 	FetchResult Res;
 	Res.Filename = Itm->DestFile;
 	URIStart(Res);
 
-	_error->Debug("Downloading %s", Res.Filename.c_str());
+	//_error->Debug("Downloading %s", Res.Filename.c_str());
 
-	pid_t Process = ExecFork();
-	if (Process == 0)
+	TftpClient TftpClient;
+
+	std::string ErrorMessage;
+	TftpClient::tftp_error_e Result = TftpClient.read(Get.Host.c_str(), File.c_str(), Itm->DestFile.c_str(), ErrorMessage);
+
+	//_error->Debug("Downloaded %s: result %d, message: %s", Res.Filename.c_str(), (int)Result, ErrorMessage.c_str());
+
+	switch (Result)
 	{
-		if (Get.Port == 0)
-			Get.Port = 69; // Default TFTP port
-		std::string Port = std::to_string(Get.Port);
-
-		// Invoke tftp to download the file
-		const char *Args[16];
-		unsigned int i = 0;
-		Args[i++] = "atftp";
-		Args[i++] = "--get";
-		Args[i++] = "--local-file";
-		Args[i++] = Itm->DestFile.c_str();
-		Args[i++] = "--remote-file";
-		Args[i++] = File.c_str();
-		Args[i++] = Get.Host.c_str();
-		Args[i++] = Port.c_str();
-		Args[i++] = NULL;
-		execvp(Args[0], (char **)Args);
-		exit(127);
+	case TftpClient::TFTP_SUCCESS:
+		CalculateHashes(Itm, Res);
+		URIDone(Res);
+		break;
+	case TftpClient::TFTP_ERROR_FILE_NOT_FOUND:
+		Fail(ErrorMessage, false);
+		break;
+	case TftpClient::TFTP_ERROR_ACCESS_VIOLATION:
+	case TftpClient::TFTP_ERROR_DISK_FULL_OR_ALLOCATION_EXCEEDED:
+	case TftpClient::TFTP_ERROR_ILLEGAL_TFTP_OPERATION:
+	case TftpClient::TFTP_ERROR_UNKNOWN_TRANSFER_ID:
+	case TftpClient::TFTP_ERROR_FILE_ALREADY_EXISTS:
+	case TftpClient::TFTP_ERROR_NO_SUCH_USER:
+	case TftpClient::TFTP_ERROR_INTERNAL_ERROR:
+		Fail(ErrorMessage, true);
+		break;
 	}
-
-	if (!ExecWait(Process, "atftp", false))
-	{
-		Fail(true);
-		return true;
-	}
-
-	CalculateHashes(Itm, Res);
-	URIDone(Res);
 
 	return true;
 }
