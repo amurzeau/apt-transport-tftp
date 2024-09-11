@@ -17,7 +17,7 @@
 
 cmake_minimum_required(VERSION 3.13)
 
-project(apt-transport-tftp VERSION 1.0.0 LANGUAGES C CXX)
+project(apt-transport-tftp VERSION 1.1.0 LANGUAGES C CXX)
 
 add_executable(${PROJECT_NAME} tftp.cpp libtftp.cpp libtftp.h)
 target_compile_options(${PROJECT_NAME} PRIVATE -Wall)
