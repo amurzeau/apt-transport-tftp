@@ -1,0 +1,19 @@
+Source: apt-transport-tftp
+Section: admin
+Priority: optional
+Maintainer: Alexis Murzeau <amubtdx@gmail.com>
+Build-Depends: cmake,
+ debhelper-compat (= 13),
+ libapt-pkg-dev
+Standards-Version: 4.6.1
+Homepage: https://github.com/amurzeau/apt-transport-tftp
+Rules-Requires-Root: no
+
+Package: apt-transport-tftp
+Architecture: any
+Multi-Arch: foreign
+Depends: ${misc:Depends}, ${shlibs:Depends}
+Description: APT TFTP transport
+ This package contains the APT TFTP transport. It makes it possible to
+ use 'deb tftp://localhost:69/foo distro main' type lines in your
+ sources.list file.

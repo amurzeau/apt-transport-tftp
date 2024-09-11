@@ -1,0 +1,5 @@
+apt-transport-tftp (1.0) unstable; urgency=low
+
+  * Initial release.
+
+ -- Alexis Murzeau <amubtdx@gmail.com>  Thu, 08 Aug 2024 21:54:33 +0200
