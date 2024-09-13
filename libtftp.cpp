@@ -15,6 +15,9 @@ TftpClient::tftp_error_e TftpClient::read(const char *ip, const char *filename, 
 	if (!initialize_sockets())
 		return return_error(error_message);
 
+	if (!send_request(ip, filename))
+		return return_error(error_message);
+
 	std::unique_ptr<FILE, int (*)(FILE *)> destination_file(nullptr, &fclose);
 
 	destination_file.reset(fopen(destination_path, "wb"));
@@ -32,17 +35,6 @@ TftpClient::tftp_error_e TftpClient::read(const char *ip, const char *filename, 
 	{
 		bool is_timeout;
 
-		// Send ACK for previous packet
-		if (last_data_packet_block == 0)
-		{
-			if (!send_request(ip, filename))
-				return return_error(error_message);
-		}
-		else
-		{
-			send_ack(last_data_packet_block);
-		}
-
 		if (end_of_transfer)
 		{
 			break;
@@ -52,6 +44,17 @@ TftpClient::tftp_error_e TftpClient::read(const char *ip, const char *filename, 
 		{
 			if (is_timeout)
 			{
+				// Resend ack
+				if (last_data_packet_block == 0)
+				{
+					if (!send_request(ip, filename))
+						return return_error(error_message);
+				}
+				else
+				{
+					send_ack(last_data_packet_block);
+				}
+
 				timeout_count++;
 				if (timeout_count < 10)
 					continue;
@@ -74,6 +77,10 @@ TftpClient::tftp_error_e TftpClient::read(const char *ip, const char *filename, 
 			}
 
 			uint16_t current_block = (buffer[2] << 8) | buffer[3];
+
+			// Send ACK
+			send_ack(current_block);
+
 			if (current_block == last_data_packet_block)
 			{
 				// Already processed
@@ -89,9 +96,9 @@ TftpClient::tftp_error_e TftpClient::read(const char *ip, const char *filename, 
 					return TFTP_ERROR_INTERNAL_ERROR;
 				}
 			}
-			if (buffer.size() < 516)
+			if (buffer.size() < block_size + 4)
 			{
-				// DATA of less than 512 bytes => Last packet
+				// DATA of less than blksize bytes => Last packet
 				end_of_transfer = true;
 			}
 			break;
@@ -133,6 +140,13 @@ TftpClient::tftp_error_e TftpClient::read(const char *ip, const char *filename, 
 				break;
 			}
 			return tftp_error;
+
+		// OACK packet (Option Ack)
+		case 6:
+			parse_oack(buffer);
+			// Send ACK
+			send_ack(0);
+			break;
 		default: // Unexpected packet
 			error_message = std::string("invalid opcode received: ") + std::to_string(opcode);
 			return TFTP_ERROR_ILLEGAL_TFTP_OPERATION;
@@ -195,7 +209,7 @@ bool TftpClient::initialize_sockets()
 bool TftpClient::read_packet(std::vector<uint8_t> &buffer, bool &is_timeout)
 {
 	int ret;
-	buffer.resize(512 + 4);
+	buffer.resize(block_size + 4);
 	do
 	{
 		ret = recvfrom(local_sockfd, (char *)buffer.data(), buffer.size(),
@@ -237,16 +251,24 @@ bool TftpClient::send_packet(const std::vector<uint8_t> &buffer)
 bool TftpClient::send_request(const char *ip, const char *filename)
 {
 	static const char mode[] = "octet";
+	static const char blksize_option[] = "blksize";
+	static const char blksize_value[] = "65464";
 	std::vector<uint8_t> buffer;
 
 	// Opcode: RRQ = 1
 	buffer.push_back(0);
 	buffer.push_back(1);
 
+	// Filename
 	buffer.insert(buffer.end(), filename, filename + strlen(filename));
 	buffer.push_back(0);
 
+	// Mode
 	buffer.insert(buffer.end(), mode, mode + sizeof(mode));
+
+	// Option blksize for faster transfers
+	buffer.insert(buffer.end(), blksize_option, blksize_option + sizeof(blksize_option));
+	buffer.insert(buffer.end(), blksize_value, blksize_value + sizeof(blksize_value));
 
 	memset(&remote_addr, 0, sizeof(remote_addr));
 
@@ -272,4 +294,47 @@ bool TftpClient::send_ack(size_t last_data_packet_block)
 	buffer.push_back(last_data_packet_block & 0xFF);
 
 	return send_packet(buffer);
+}
+
+void TftpClient::parse_oack(const std::vector<uint8_t> &buffer)
+{
+	std::string option;
+	std::string value;
+
+	bool parsingOption = true;
+
+	for (size_t i = 2; i < buffer.size(); i++)
+	{
+		char c = (char)buffer[i];
+		if (c != 0)
+		{
+			if (parsingOption)
+				option.push_back(c);
+			else
+				value.push_back(c);
+		}
+		else
+		{
+			if (parsingOption)
+			{
+				parsingOption = false;
+			}
+			else
+			{
+				parsingOption = true;
+				// End of option/value, parse the result
+				if (option == "blksize")
+				{
+					// Block size
+					size_t blksize = strtol(value.c_str(), NULL, 0);
+					if (blksize != 0)
+					{
+						block_size = blksize;
+					}
+				}
+				option.clear();
+				value.clear();
+			}
+		}
+	}
 }

@@ -81,11 +81,13 @@ class TftpClient
 	bool send_packet(const std::vector<uint8_t> &buffer);
 	bool send_request(const char *ip, const char *filename);
 	bool send_ack(size_t last_data_packet_block);
+	void parse_oack(const std::vector<uint8_t> &buffer);
 
 	private:
 	unique_fd local_sockfd;
 	struct sockaddr_in remote_addr;
 	unsigned int remote_addr_len;
+	size_t block_size = 512;
 
 	enum tftp_error_e tftp_error;
 	std::string error_message;
